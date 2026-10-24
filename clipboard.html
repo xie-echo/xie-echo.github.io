@@ -1,0 +1,639 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="theme-color" content="#0b1220">
+<title>局域网剪贴板 · 扫码多端同步</title>
+<!-- 引入二维码生成库 和 PeerJS 信令库 -->
+<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+<script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+
+<style>
+  :root{
+    --bg:#0b1220; --panel:#141e30; --panel2:#1b2740; --line:#27354f;
+    --text:#e6edf7; --muted:#8ea3c0; --accent:#4ea8ff;
+    --ok:#2ecc71; --warn:#f0b429; --err:#ff5c5c;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%}
+  body{
+    margin:0;padding:14px 14px 100px;min-height:100vh;
+    background:radial-gradient(1000px 520px at 50% -12%,#18263f 0%,#0b1220 62%);
+    color:var(--text);
+    font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;
+  }
+  .wrap{max-width:660px;margin:0 auto}
+  h1{font-size:17px;margin:2px 0 12px;display:flex;align-items:center;gap:8px;font-weight:600}
+  .badge{font-size:12px;padding:2px 9px;border-radius:99px;font-weight:500;letter-spacing:.3px}
+  .badge.on{background:rgba(46,204,113,.15);color:var(--ok);border:1px solid rgba(46,204,113,.4)}
+  .badge.off{background:rgba(142,163,192,.12);color:var(--muted);border:1px solid var(--line)}
+  .card{
+    background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,0)) ,var(--panel);
+    border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:14px;
+    box-shadow:0 8px 28px rgba(0,0,0,.25);
+  }
+  .card-title{font-size:14px;font-weight:600;margin-bottom:8px;color:#cfe1ff}
+  .desc{font-size:13px;color:var(--muted);margin:0 0 12px}
+  .btn-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+  .btn{
+    flex:1 1 auto;min-width:120px;cursor:pointer;
+    background:var(--panel2);color:var(--text);
+    border:1px solid var(--line);border-radius:10px;
+    padding:11px 14px;font-size:14px;font-family:inherit;
+    transition:.15s;user-select:none;
+  }
+  .btn:hover{background:#243354}
+  .btn:active{transform:scale(.98)}
+  .btn.primary{background:linear-gradient(180deg,#3d95ff,#2b7ce0);border-color:#2b7ce0;color:#fff;font-weight:600}
+  .btn.primary:hover{background:linear-gradient(180deg,#4fa0ff,#2f86ec)}
+  .btn.small{padding:8px 12px;font-size:13px;flex:0 0 auto;min-width:0}
+  .code{
+    width:100%;background:#0c1524;color:#a8c7f0;border:1px solid var(--line);
+    border-radius:10px;padding:10px;font:14px/1.45 ui-monospace,Consolas,Menlo,monospace;
+    resize:vertical;word-break:break-all;outline:none;
+  }
+  .code:focus{border-color:var(--accent);box-shadow:0 0 0 2px rgba(78,168,255,.15)}
+  .hint{font-size:12.5px;color:var(--muted);margin-top:8px;line-height:1.5}
+  .tip{
+    font-size:13px;border-radius:10px;padding:10px 12px;margin-bottom:14px;line-height:1.55;
+    background:rgba(240,180,41,.1);border:1px solid rgba(240,180,41,.35);color:#ffd777;
+  }
+  .hidden{display:none !important}
+  .switch{display:flex;align-items:center;gap:10px;cursor:pointer;user-select:none;font-size:14px}
+  .switch input{width:44px;height:26px;-webkit-appearance:none;appearance:none;background:#2a3a57;
+    border-radius:99px;position:relative;outline:none;cursor:pointer;transition:.2s;flex:0 0 auto}
+  .switch input:checked{background:var(--accent)}
+  .switch input::after{content:"";position:absolute;top:3px;left:3px;width:20px;height:20px;
+    border-radius:50%;background:#fff;transition:.2s}
+  .switch input:checked::after{transform:translateX(18px)}
+  .sep{border:none;border-top:1px solid var(--line);margin:16px 0}
+  .log{
+    max-height:280px;overflow-y:auto;background:#0c1524;border:1px solid var(--line);
+    border-radius:10px;padding:8px;font-size:13px;display:flex;flex-direction:column;gap:5px;
+  }
+  .log-item{display:flex;gap:8px;line-height:1.45;padding:3px 4px;border-radius:6px}
+  .log-item .time{color:#54709a;font:11px/1.9 ui-monospace,monospace;flex:0 0 auto}
+  .log-item .txt{word-break:break-all}
+  .log-item.in{color:#9ad7a8}
+  .log-item.out{color:#8fc2ff}
+  .log-item.ok{color:var(--ok)}
+  .log-item.err{color:var(--err)}
+  .log-item.warn{color:var(--warn)}
+  .log-item.info{color:var(--muted)}
+  .log-item.copyable{cursor:pointer}
+  .log-item.copyable:hover{background:rgba(78,168,255,.1)}
+  .pending{
+    position:fixed;left:0;right:0;bottom:0;z-index:50;
+    display:flex;align-items:center;gap:10px;justify-content:space-between;
+    padding:12px 16px;background:#16233b;border-top:1px solid var(--line);
+    box-shadow:0 -8px 24px rgba(0,0,0,.4);font-size:13px;
+  }
+  .pending span{flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .qr-box{display:flex;flex-direction:column;align-items:center;gap:10px;margin:12px 0;padding:16px;background:#fff;border-radius:12px}
+  .qr-id{font:bold 16px ui-monospace,monospace;color:#0b1220;letter-spacing:1px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>📋 局域网剪贴板 <span id="connBadge" class="badge off">未连接</span></h1>
+
+  <div id="secureTip" class="tip hidden"></div>
+
+  <!-- ================= 连接面板 ================= -->
+  <div id="connectPanel" class="card">
+    <div class="card-title">第一步 · 建立局域网直连</div>
+    <p class="desc">
+      由一台设备作为主机生成二维码，其他设备扫码即可加入。
+      所有剪贴板数据走 WebRTC 局域网直连（DTLS 加密），<b>内容不经过任何服务器</b>。
+    </p>
+
+    <div class="btn-row">
+      <button class="btn primary" id="btnHost">① 本机作为主机 (生成二维码)</button>
+      <button class="btn" id="btnGuest">② 本机作为从机 (扫码加入)</button>
+    </div>
+
+    <!-- 主机流程 -->
+    <div id="hostFlow" class="flow hidden" style="margin-top:16px">
+      <div class="step">
+        <div class="step-title">1. 用其他设备（手机/电脑）的浏览器扫一扫下方二维码</div>
+        
+        <div class="qr-box">
+          <canvas id="qrCanvas"></canvas>
+          <div class="qr-id" id="hostIdDisplay">等待生成...</div>
+        </div>
+
+        <div class="hint" id="qrHint">
+          💡 提示：如果手机扫不开，请确保当前网页的地址不是 localhost，而是局域网 IP（如 http://192.168.x.x:端口）。
+        </div>
+      </div>
+    </div>
+
+    <!-- 从机流程 -->
+    <div id="guestFlow" class="flow hidden" style="margin-top:16px">
+      <div class="step">
+        <div class="step-title">输入主机 ID（如果扫码未能自动连接）</div>
+        <input type="text" id="hostIdInput" class="code" placeholder="例如：clip-a8f9g2" autocapitalize="off" autocorrect="off" spellcheck="false">
+        <div class="btn-row">
+          <button class="btn primary small" id="btnConnect">连接主机</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= 主面板 ================= -->
+  <div id="mainPanel" class="card hidden">
+    <div class="card-title">已连接 · 多端剪贴板同步</div>
+
+    <label class="switch">
+      <input type="checkbox" id="autoSync">
+      <span>自动同步剪贴板（页面需保持前台）</span>
+    </label>
+    <div class="hint" id="autoHint"></div>
+
+    <div class="btn-row" style="margin-top:12px">
+      <button class="btn" id="btnReadClip">📤 读取本机剪贴板并发送</button>
+    </div>
+
+    <hr class="sep">
+
+    <div class="card-title">对话框</div>
+    <textarea id="msgInput" class="code" rows="3" spellcheck="false"
+              placeholder="输入要发送到其他设备剪贴板的文字……"></textarea>
+    <div class="btn-row">
+      <button class="btn primary" id="btnSend">发送并写入其他设备剪贴板</button>
+    </div>
+
+    <hr class="sep">
+
+    <div class="card-title">同步记录 <span class="hint" style="display:inline;font-weight:400">（点击绿色条目可复制）</span></div>
+    <div id="log" class="log"></div>
+  </div>
+
+</div>
+
+<!-- 待写入剪贴板提示条 -->
+<div id="pendingBar" class="pending hidden">
+  <span id="pendingText">有内容待写入剪贴板</span>
+  <button class="btn small primary" id="btnPendingWrite">点此写入</button>
+</div>
+
+<script>
+"use strict";
+
+const $ = (sel) => document.querySelector(sel);
+
+/* ==================================================================
+ *  0. 基础工具
+ * ================================================================== */
+function preview(text, n = 30) {
+  const t = String(text).replace(/\s+/g, " ").trim();
+  return t.length > n ? t.slice(0, n) + "…" : t;
+}
+
+function log(msg, cls = "info", copyableText = null) {
+  const box = $("#log");
+  if (!box) return;
+  const el = document.createElement("div");
+  el.className = "log-item " + cls;
+  const time = document.createElement("span");
+  time.className = "time";
+  time.textContent = new Date().toLocaleTimeString("zh-CN", { hour12: false });
+  const txt = document.createElement("span");
+  txt.className = "txt";
+  txt.textContent = msg;
+  el.appendChild(time);
+  el.appendChild(txt);
+
+  if (copyableText) {
+    el.classList.add("copyable");
+    el.title = "点击复制这条内容";
+    el.addEventListener("click", async () => {
+      const ok = await writeClipboard(copyableText);
+      log(ok ? "已复制到剪贴板 ✅" : "复制失败，请手动选择文本", ok ? "ok" : "err");
+    });
+  }
+
+  box.prepend(el);
+  while (box.children.length > 80) box.removeChild(box.lastChild);
+}
+
+/* ==================================================================
+ *  1. 剪贴板读写
+ * ================================================================== */
+async function writeClipboard(text) {
+  text = String(text);
+  if (window.isSecureContext && navigator.clipboard && navigator.clipboard.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch (e) {}
+  }
+  return legacyCopy(text);
+}
+
+function legacyCopy(text) {
+  let ok = false;
+  const prevFocus = document.activeElement;
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.style.cssText = "position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;padding:0;border:0;";
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    ta.setSelectionRange(0, ta.value.length);
+    ok = document.execCommand("copy");
+    document.body.removeChild(ta);
+  } catch (e) { ok = false; }
+  if (prevFocus && typeof prevFocus.focus === "function") {
+    try { prevFocus.focus(); } catch (e) {}
+  }
+  return ok;
+}
+
+async function readClipboard() {
+  if (!window.isSecureContext || !navigator.clipboard || !navigator.clipboard.readText) {
+    return { ok: false, reason: "unsupported" };
+  }
+  try {
+    const text = await navigator.clipboard.readText();
+    return { ok: true, text };
+  } catch (e) {
+    return { ok: false, reason: e.message || String(e) };
+  }
+}
+
+/* ==================================================================
+ *  2. 全局状态 & PeerJS 相关
+ * ================================================================== */
+let peer = null;
+let isHost = false;
+let hostConn = null;           // 从机保存与主机的连接
+let connections = [];          // 主机保存所有从机的连接
+
+let autoTimer = null;
+let lastClip = "";
+let lastRecv = "";
+let pendingText = "";
+
+// 当前局域网的 Peer ID 前缀
+const PEER_PREFIX = "clip_";
+
+/* ==================================================================
+ *  3. P2P 通信逻辑 (WebRTC DataChannel via PeerJS)
+ * ================================================================== */
+
+// 初始化 Peer 实例
+function initPeer(id = null) {
+  if (peer) peer.destroy();
+  peer = new Peer(id, { debug: 0 });
+
+  peer.on('error', (err) => {
+    log("P2P 网络错误: " + err.type, "err");
+    if (err.type === 'peer-unavailable') {
+      alert("未找到该主机，请检查主机 ID 是否正确，或主机是否已离线。");
+    } else if (err.type === 'unavailable-id') {
+      alert("ID 冲突，请刷新页面重试。");
+    }
+  });
+}
+
+// 主机逻辑：生成二维码和 ID
+function startHost() {
+  isHost = true;
+  $("#hostFlow").classList.remove("hidden");
+  $("#guestFlow").classList.add("hidden");
+  $("#hostIdDisplay").textContent = "正在连接信令服务器...";
+
+  const randomId = PEER_PREFIX + Math.random().toString(36).substr(2, 6);
+  
+  initPeer(randomId);
+
+  peer.on('open', (id) => {
+    $("#hostIdDisplay").textContent = id;
+    
+    // 生成扫码打开的 URL
+    const baseUrl = window.location.href.split('#')[0];
+    let qrUrl = baseUrl + '#join=' + id;
+
+    // 如果当前是 localhost 或 127.0.0.1，提示用户无法用手机扫
+    if (baseUrl.includes("localhost") || baseUrl.includes("127.0.0.1")) {
+      $("#qrHint").innerHTML = "⚠️ 检测到你正在使用 <b>localhost</b> 访问。手机无法扫码打开此地址！<br>请使用电脑的局域网 IP（如 http://192.168.x.x）访问本页面，再生成二维码。";
+      $("#qrHint").style.color = "var(--err)";
+    } else if (window.location.protocol === 'file:') {
+      $("#qrHint").innerHTML = "⚠️ 检测到你是双击本地文件打开的。手机无法访问 <b>file://</b> 协议。<br>请手动在手机上打开该网页，并输入上方的主机 ID 连接。";
+      $("#qrHint").style.color = "var(--err)";
+      qrUrl = id; // 如果本地文件，二维码只放 ID
+    } else {
+      $("#qrHint").textContent = "💡 提示：请确保手机和电脑连接同一个 Wi-Fi，用系统相机或微信扫码即可跳转。";
+      $("#qrHint").style.color = "var(--muted)";
+    }
+
+    // 绘制二维码
+    QRCode.toCanvas($("#qrCanvas"), qrUrl, {
+      width: 200,
+      margin: 1,
+      color: { dark: '#0b1220', light: '#ffffff' }
+    }, (error) => {
+      if (error) log("二维码生成失败: " + error, "err");
+    });
+  });
+
+  // 接收从机连接
+  peer.on('connection', (conn) => {
+    connections.push(conn);
+    setupConnection(conn);
+    log(`📱 新设备已接入 (当前共 ${connections.length} 台从机)`, "ok");
+    updateStatusCount();
+  });
+}
+
+// 从机逻辑：连接主机
+function connectToHost(hostId) {
+  if (!hostId) return alert("请输入主机 ID");
+  hostId = hostId.trim();
+  if (!hostId.startsWith(PEER_PREFIX)) {
+    hostId = PEER_PREFIX + hostId;
+  }
+
+  isHost = false;
+  $("#hostFlow").classList.add("hidden");
+  $("#guestFlow").classList.remove("hidden");
+  $("#btnConnect").disabled = true;
+  $("#btnConnect").textContent = "连接中...";
+
+  initPeer();
+
+  peer.on('open', () => {
+    hostConn = peer.connect(hostId, { reliable: true });
+    setupConnection(hostConn);
+  });
+}
+
+// 统一配置连接事件
+function setupConnection(conn) {
+  conn.on('open', () => {
+    setConnectedUI(true);
+    log("✅ 局域网 P2P 通道已建立", "ok");
+    if (!isHost) {
+      $("#btnConnect").disabled = false;
+      $("#btnConnect").textContent = "已连接";
+    }
+  });
+
+  conn.on('data', (data) => {
+    onData(data, conn);
+  });
+
+  conn.on('close', () => {
+    log("设备已断开连接", "warn");
+    if (isHost) {
+      connections = connections.filter(c => c !== conn);
+      updateStatusCount();
+      if (connections.length === 0) setConnectedUI(false);
+    } else {
+      setConnectedUI(false);
+      hostConn = null;
+    }
+  });
+}
+
+function updateStatusCount() {
+  if (isHost && connections.length > 0) {
+    $("#connBadge").textContent = `已连接 (从机: ${connections.length})`;
+  }
+}
+
+// 收到数据
+async function onData(data, senderConn) {
+  if (data.type !== 'clip' && data.type !== 'text') return;
+  const text = String(data.text);
+  if (!text) return;
+
+  lastRecv = text;
+  lastClip = text; // 防回声
+
+  log(`⬇ 收到内容：${preview(text)}`, "in", text);
+
+  // 1. 写入本地剪贴板
+  const ok = await writeClipboard(text);
+  if (ok) {
+    log("已写入本机剪贴板 ✅", "ok");
+    hidePending();
+  } else {
+    showPending(text);
+    log("⚠️ 自动写入失败，请点底部按钮手动写入", "warn");
+  }
+
+  // 2. 如果是主机，负责转发给其他从机 (Mesh 广播)
+  if (isHost) {
+    connections.forEach(c => {
+      if (c !== senderConn && c.open) {
+        c.send({ type: 'clip', text });
+      }
+    });
+  }
+}
+
+// 发送数据
+function sendData(text) {
+  if (!text) return;
+  const payload = { type: 'clip', text };
+
+  if (isHost) {
+    let count = 0;
+    connections.forEach(c => {
+      if (c.open) { c.send(payload); count++; }
+    });
+    log(`⬆ 已广播发送：${preview(text)} (发往 ${count} 台设备)`, "out", text);
+  } else {
+    if (hostConn && hostConn.open) {
+      hostConn.send(payload);
+      log(`⬆ 已发送给主机：${preview(text)}`, "out", text);
+    } else {
+      log("未连接到主机，无法发送", "err");
+    }
+  }
+}
+
+/* ==================================================================
+ *  4. 自动同步轮询 (优化版，防止无限弹窗)
+ * ================================================================== */
+async function checkClipboardPermission() {
+  try {
+    const perm = await navigator.permissions.query({ name: 'clipboard-read' });
+    return perm.state;
+  } catch (e) { return 'prompt'; }
+}
+
+async function startAutoSync() {
+  stopAutoSync();
+  if (!window.isSecureContext || !navigator.clipboard || !navigator.clipboard.readText) {
+    $("#autoSync").checked = false;
+    log("当前页面无法自动读取剪贴板（需 HTTPS 或 localhost 环境）", "err");
+    return;
+  }
+  const state = await checkClipboardPermission();
+  if (state === 'denied') {
+    $("#autoSync").checked = false;
+    log("❌ 剪贴板权限已被拒绝，请在浏览器地址栏左侧重置权限。", "err");
+    return;
+  }
+  if (state === 'prompt') {
+    const res = await readClipboard();
+    if (!res.ok) {
+      $("#autoSync").checked = false;
+      log("未获得剪贴板读取权限，已停止自动同步。", "err");
+      return;
+    }
+  }
+  autoTimer = setInterval(pollClipboard, 1500);
+  log("自动同步已开启（页面需保持前台）", "info");
+}
+
+function stopAutoSync() {
+  if (autoTimer) { clearInterval(autoTimer); autoTimer = null; }
+}
+
+async function pollClipboard() {
+  if (document.visibilityState !== "visible") return;
+  if (!isHost && (!hostConn || !hostConn.open)) return;
+  if (isHost && connections.length === 0) return;
+
+  const res = await readClipboard();
+  if (!res.ok) {
+    if (res.reason && (res.reason.includes('denied') || res.reason.includes('NotAllowed') || res.reason.includes('Document is not focused'))) {
+       stopAutoSync();
+       $("#autoSync").checked = false;
+       log("⚠️ 剪贴板读取被拦截，自动同步已停止。请手动点击发送按钮。", "warn");
+    }
+    return;
+  }
+
+  const text = res.text;
+  if (!text || text === lastClip || text === lastRecv) return;
+
+  lastClip = text;
+  sendData(text);
+}
+
+/* ==================================================================
+ *  5. UI 相关
+ * ================================================================== */
+function setConnectedUI(ok) {
+  $("#connBadge").className = "badge " + (ok ? "on" : "off");
+  if (!ok) $("#connBadge").textContent = "未连接";
+  
+  $("#connectPanel").classList.toggle("hidden", ok);
+  $("#mainPanel").classList.toggle("hidden", !ok);
+
+  if (!ok) {
+    stopAutoSync();
+    $("#autoSync").checked = false;
+  } else {
+    if (!window.isSecureContext) {
+      $("#autoHint").innerHTML = "当前是 <b>http 非安全上下文</b>，自动同步可能受限，建议使用右侧按钮手动同步。";
+    } else {
+      $("#autoHint").textContent = "自动同步会在后台检测剪贴板变化，并同步到所有设备。";
+    }
+  }
+}
+
+function showPending(text) {
+  pendingText = text;
+  $("#pendingBar").classList.remove("hidden");
+  $("#pendingText").textContent = "待写入剪贴板：" + preview(text, 40);
+}
+function hidePending() {
+  pendingText = "";
+  $("#pendingBar").classList.add("hidden");
+}
+
+/* ==================================================================
+ *  6. 事件绑定
+ * ================================================================== */
+$("#btnHost").addEventListener("click", startHost);
+$("#btnGuest").addEventListener("click", () => {
+  $("#guestFlow").classList.remove("hidden");
+  $("#hostFlow").classList.add("hidden");
+});
+$("#btnConnect").addEventListener("click", () => {
+  const id = $("#hostIdInput").value.trim();
+  if (id) connectToHost(id);
+});
+
+$("#autoSync").addEventListener("change", (e) => {
+  if (e.target.checked) startAutoSync();
+  else { stopAutoSync(); log("自动同步已关闭", "info"); }
+});
+
+$("#btnReadClip").addEventListener("click", async () => {
+  const res = await readClipboard();
+  if (!res.ok) {
+    log(res.reason === 'unsupported' ? "当前环境不支持自动读取，请粘贴到输入框发送。" : "读取被拒绝", "err");
+    return;
+  }
+  if (!res.text) { log("剪贴板是空的", "warn"); return; }
+  lastClip = res.text;
+  sendData(res.text);
+});
+
+$("#btnSend").addEventListener("click", () => {
+  const text = $("#msgInput").value;
+  if (!text.trim()) return;
+  sendData(text);
+  lastClip = text;
+  writeClipboard(text); // 同时写入本机剪贴板
+  $("#msgInput").value = "";
+});
+
+$("#btnPendingWrite").addEventListener("click", async () => {
+  if (!pendingText) return;
+  const ok = await writeClipboard(pendingText);
+  if (ok) { log("已写入剪贴板 ✅", "ok"); hidePending(); }
+  else log("写入失败，请长按内容手动复制", "err");
+});
+
+document.addEventListener("click", async () => {
+  if (window.isSecureContext && navigator.clipboard) {
+    try { await navigator.clipboard.readText(); } catch (e) {}
+  }
+}, { passive: true });
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && autoTimer) pollClipboard();
+});
+
+window.addEventListener("beforeunload", () => {
+  if (peer) peer.destroy();
+});
+
+/* ==================================================================
+ *  7. 初始化：解析 URL 中的自动连接参数
+ * ================================================================== */
+(function init() {
+  if (!window.isSecureContext) {
+    $("#secureTip").classList.remove("hidden");
+    $("#secureTip").innerHTML = "⚠️ 当前页面运行在非安全上下文，自动读写剪贴板受限，但 P2P 传输和手动复制功能正常。";
+  }
+
+  // 解析扫码跳转过来的 Hash 参数
+  const hash = window.location.hash;
+  if (hash.startsWith('#join=')) {
+    const hostId = hash.replace('#join=', '');
+    setTimeout(() => {
+      $("#guestFlow").classList.remove("hidden");
+      $("#hostFlow").classList.add("hidden");
+      $("#hostIdInput").value = hostId;
+      connectToHost(hostId);
+      // 清理地址栏 Hash，防止刷新重复触发
+      history.replaceState(null, "", window.location.pathname + window.location.search);
+    }, 300);
+  }
+})();
+</script>
+</body>
+</html>
