@@ -5,9 +5,10 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <meta name="theme-color" content="#0b1220">
 <title>局域网剪贴板 · 扫码多端同步</title>
-<!-- 引入二维码生成库 和 PeerJS 信令库 -->
-<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
-<script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+<!-- 引入二维码生成库 (使用国内 BootCDN，并将渲染方式改为 DIV，兼容性更强) -->
+<script src="https://cdn.bootcdn.net/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<!-- 引入 PeerJS 信令库 -->
+<script src="https://cdn.bootcdn.net/ajax/libs/peerjs/1.5.2/peerjs.min.js"></script>
 
 <style>
   :root{
@@ -91,7 +92,10 @@
   }
   .pending span{flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .qr-box{display:flex;flex-direction:column;align-items:center;gap:10px;margin:12px 0;padding:16px;background:#fff;border-radius:12px}
-  .qr-id{font:bold 16px ui-monospace,monospace;color:#0b1220;letter-spacing:1px}
+  .qr-id{font:bold 16px ui-monospace,monospace;color:#0b1220;letter-spacing:1px; margin-top:8px;}
+  /* 二维码 div 容器样式 */
+  #qrcode { width: 200px; height: 200px; display: flex; align-items: center; justify-content: center; }
+  #qrcode img { max-width: 100%; max-height: 100%; }
 </style>
 </head>
 <body>
@@ -111,7 +115,7 @@
 
     <div class="btn-row">
       <button class="btn primary" id="btnHost">① 本机作为主机 (生成二维码)</button>
-      <button class="btn" id="btnGuest">② 本机作为从机 (扫码加入)</button>
+      <button class="btn" id="btnGuest">② 本机作为从机 (扫码或输入ID)</button>
     </div>
 
     <!-- 主机流程 -->
@@ -120,7 +124,8 @@
         <div class="step-title">1. 用其他设备（手机/电脑）的浏览器扫一扫下方二维码</div>
         
         <div class="qr-box">
-          <canvas id="qrCanvas"></canvas>
+          <!-- 使用 div 代替 canvas 渲染二维码 -->
+          <div id="qrcode"></div>
           <div class="qr-id" id="hostIdDisplay">等待生成...</div>
         </div>
 
@@ -271,22 +276,20 @@ async function readClipboard() {
  * ================================================================== */
 let peer = null;
 let isHost = false;
-let hostConn = null;           // 从机保存与主机的连接
-let connections = [];          // 主机保存所有从机的连接
+let hostConn = null;           
+let connections = [];          
 
 let autoTimer = null;
 let lastClip = "";
 let lastRecv = "";
 let pendingText = "";
 
-// 当前局域网的 Peer ID 前缀
 const PEER_PREFIX = "clip_";
 
 /* ==================================================================
  *  3. P2P 通信逻辑 (WebRTC DataChannel via PeerJS)
  * ================================================================== */
 
-// 初始化 Peer 实例
 function initPeer(id = null) {
   if (peer) peer.destroy();
   peer = new Peer(id, { debug: 0 });
@@ -315,34 +318,42 @@ function startHost() {
   peer.on('open', (id) => {
     $("#hostIdDisplay").textContent = id;
     
-    // 生成扫码打开的 URL
-    const baseUrl = window.location.href.split('#')[0];
-    let qrUrl = baseUrl + '#join=' + id;
+    // 使用查询参数 ?join= 替代 hash，防止部分扫码器不识别 hash
+    const baseUrl = window.location.origin + window.location.pathname;
+    let qrUrl = baseUrl + '?join=' + id;
 
-    // 如果当前是 localhost 或 127.0.0.1，提示用户无法用手机扫
     if (baseUrl.includes("localhost") || baseUrl.includes("127.0.0.1")) {
       $("#qrHint").innerHTML = "⚠️ 检测到你正在使用 <b>localhost</b> 访问。手机无法扫码打开此地址！<br>请使用电脑的局域网 IP（如 http://192.168.x.x）访问本页面，再生成二维码。";
       $("#qrHint").style.color = "var(--err)";
     } else if (window.location.protocol === 'file:') {
       $("#qrHint").innerHTML = "⚠️ 检测到你是双击本地文件打开的。手机无法访问 <b>file://</b> 协议。<br>请手动在手机上打开该网页，并输入上方的主机 ID 连接。";
       $("#qrHint").style.color = "var(--err)";
-      qrUrl = id; // 如果本地文件，二维码只放 ID
+      qrUrl = id; // 本地文件打开时，二维码只包含 ID
     } else {
       $("#qrHint").textContent = "💡 提示：请确保手机和电脑连接同一个 Wi-Fi，用系统相机或微信扫码即可跳转。";
       $("#qrHint").style.color = "var(--muted)";
     }
 
-    // 绘制二维码
-    QRCode.toCanvas($("#qrCanvas"), qrUrl, {
-      width: 200,
-      margin: 1,
-      color: { dark: '#0b1220', light: '#ffffff' }
-    }, (error) => {
-      if (error) log("二维码生成失败: " + error, "err");
-    });
+    // 渲染二维码，同时增加加载失败的降级提示
+    const qrContainer = document.getElementById("qrcode");
+    qrContainer.innerHTML = ""; // 清空之前的内容
+
+    if (typeof QRCode !== 'undefined') {
+      new QRCode(qrContainer, {
+        text: qrUrl,
+        width: 200,
+        height: 200,
+        colorDark : "#0b1220",
+        colorLight : "#ffffff",
+        correctLevel : QRCode.CorrectLevel.H
+      });
+    } else {
+      // 如果二维码库加载失败
+      qrContainer.innerHTML = '<div style="color:#ff5c5c;font-size:13px;text-align:center;">二维码库加载失败<br>请手动输入右侧 ID 连接</div>';
+      log("二维码库未加载，请检查网络或 CDN", "err");
+    }
   });
 
-  // 接收从机连接
   peer.on('connection', (conn) => {
     connections.push(conn);
     setupConnection(conn);
@@ -351,7 +362,6 @@ function startHost() {
   });
 }
 
-// 从机逻辑：连接主机
 function connectToHost(hostId) {
   if (!hostId) return alert("请输入主机 ID");
   hostId = hostId.trim();
@@ -373,7 +383,6 @@ function connectToHost(hostId) {
   });
 }
 
-// 统一配置连接事件
 function setupConnection(conn) {
   conn.on('open', () => {
     setConnectedUI(true);
@@ -407,18 +416,16 @@ function updateStatusCount() {
   }
 }
 
-// 收到数据
 async function onData(data, senderConn) {
   if (data.type !== 'clip' && data.type !== 'text') return;
   const text = String(data.text);
   if (!text) return;
 
   lastRecv = text;
-  lastClip = text; // 防回声
+  lastClip = text; 
 
   log(`⬇ 收到内容：${preview(text)}`, "in", text);
 
-  // 1. 写入本地剪贴板
   const ok = await writeClipboard(text);
   if (ok) {
     log("已写入本机剪贴板 ✅", "ok");
@@ -428,7 +435,6 @@ async function onData(data, senderConn) {
     log("⚠️ 自动写入失败，请点底部按钮手动写入", "warn");
   }
 
-  // 2. 如果是主机，负责转发给其他从机 (Mesh 广播)
   if (isHost) {
     connections.forEach(c => {
       if (c !== senderConn && c.open) {
@@ -438,7 +444,6 @@ async function onData(data, senderConn) {
   }
 }
 
-// 发送数据
 function sendData(text) {
   if (!text) return;
   const payload = { type: 'clip', text };
@@ -460,7 +465,7 @@ function sendData(text) {
 }
 
 /* ==================================================================
- *  4. 自动同步轮询 (优化版，防止无限弹窗)
+ *  4. 自动同步轮询
  * ================================================================== */
 async function checkClipboardPermission() {
   try {
@@ -586,7 +591,7 @@ $("#btnSend").addEventListener("click", () => {
   if (!text.trim()) return;
   sendData(text);
   lastClip = text;
-  writeClipboard(text); // 同时写入本机剪贴板
+  writeClipboard(text); 
   $("#msgInput").value = "";
 });
 
@@ -620,17 +625,18 @@ window.addEventListener("beforeunload", () => {
     $("#secureTip").innerHTML = "⚠️ 当前页面运行在非安全上下文，自动读写剪贴板受限，但 P2P 传输和手动复制功能正常。";
   }
 
-  // 解析扫码跳转过来的 Hash 参数
-  const hash = window.location.hash;
-  if (hash.startsWith('#join=')) {
-    const hostId = hash.replace('#join=', '');
+  // 解析扫码跳转过来的 ?join= 参数
+  const urlParams = new URLSearchParams(window.location.search);
+  const joinId = urlParams.get('join');
+  
+  if (joinId) {
     setTimeout(() => {
       $("#guestFlow").classList.remove("hidden");
       $("#hostFlow").classList.add("hidden");
-      $("#hostIdInput").value = hostId;
-      connectToHost(hostId);
-      // 清理地址栏 Hash，防止刷新重复触发
-      history.replaceState(null, "", window.location.pathname + window.location.search);
+      $("#hostIdInput").value = joinId;
+      connectToHost(joinId);
+      // 清理地址栏参数，防止刷新重复触发连接
+      window.history.replaceState(null, "", window.location.pathname);
     }, 300);
   }
 })();
